@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Node.js
+node_modules/
+coverage/
+.nyc_output/
+*.log
+
+# Local credentials and environment files
+.aws/
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Terraform generated files and local state
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
