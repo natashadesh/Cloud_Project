@@ -1,0 +1,18 @@
+{
+  "name": "tf-template",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "install:deps": "npm ci --prefix sast/backend --no-fund --no-update-notifier && npm ci --prefix pentest/backend --no-fund --no-update-notifier",
+    "start:sast": "npm --prefix sast/backend start",
+    "dev:sast": "npm --prefix sast/backend run dev",
+    "start:pentest": "npm --prefix pentest/backend start",
+    "dev:pentest": "npm --prefix pentest/backend run dev",
+    "start:target": "npm --prefix pentest/backend run target",
+    "aws:credentials": "node scripts/aws-credentials.mjs",
+    "terraform:shared": "terraform -chdir=terraform/shared",
+    "terraform:apps": "terraform -chdir=terraform/apps"
+  }
+}
