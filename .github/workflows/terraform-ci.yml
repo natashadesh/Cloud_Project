@@ -1,7 +1,7 @@
 name: Terraform CI
 
 on: 
-  pull-request:
+  pull_request:
 
 permissions:
   contents: read
