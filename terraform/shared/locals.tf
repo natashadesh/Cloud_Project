@@ -1,3 +1,3 @@
 locals {
-  dynamodb_table_name = "tf-template"
+  dynamodb_table_name = "cloud-project-jobs"
 }
