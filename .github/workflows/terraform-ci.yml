@@ -1,0 +1,47 @@
+name: Terraform CI
+
+on: 
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs: 
+  terraform-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Initialize shared
+        run: terraform -chdir=terraform/shared init
+
+      - name: Validate shared
+        run: terraform -chdir=terraform/shared validate
+
+      - name: Initialize apps
+        run: terraform -chdir=terraform/apps init 
+
+      - name: Validate apps
+        run: terraform -chdir=terraform/apps validate
+
+      - name: Install TFLint
+        uses: terraform-linters/setup-tflint@v6
+
+      - name: Initialize TFLint
+        run: |
+          tflint --chdir=terraform/shared --init
+          tflint --chdir=terraform/apps --init
+
+      - name: Run TFLint
+        run: |
+          tflint --chdir=terraform/shared --format compact
+          tflint --chdir=terraform/apps --format compact
+
