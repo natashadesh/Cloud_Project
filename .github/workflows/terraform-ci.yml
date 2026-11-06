@@ -23,6 +23,12 @@ jobs:
       - name: Initialize shared
         run: terraform -chdir=terraform/shared init
 
+      - name: Build Job API Lambda package
+        run: |
+          cd lambda/job-api
+          npm ci
+          zip -q -r job-api.zip index.js package.json node_modules
+
       - name: Validate shared
         run: terraform -chdir=terraform/shared validate
 
