@@ -5,11 +5,13 @@ JavaScript SAST scanner, API penetration tester, and Terraform infrastructure.
 ## Setup
 
 Install [Node.js 24](https://nodejs.org/en/download) and npm. From the repository
-root, install the scanner dependencies:
+root, install all project dependencies (root build tools, scanners, and Job API):
 
 ```sh
 npm run install:deps
 ```
+
+Run this initial setup again when a package's dependencies or lockfile change.
 
 ## Run the local apps
 
@@ -46,7 +48,7 @@ Terraform is split into two configurations:
   It currently creates the on-demand DynamoDB table `tf-template`, with a string
   `id` partition key. The ECR and S3 files are placeholders.
 - `terraform/apps/` is intended for the Lambdas, API Gateway, and frontend assets.
-  Its files are currently placeholders and do not create app resources.
+  It currently deploys the Job API Lambda and its HTTP API Gateway.
 
 Each developer uses local Terraform state in their own AWS lab. From the
 repository root, initialize and check the shared configuration, then review the
@@ -59,6 +61,37 @@ npm run terraform:shared -- plan
 npm run terraform:shared -- apply
 npm run terraform:shared -- output
 ```
+
+For the Job API, run the initial dependency setup above, then use these commands
+from the repository root on macOS, Linux, or Windows:
+
+```sh
+npm run terraform:apps -- init
+npm run terraform:apps -- plan
+npm run terraform:apps -- apply
+```
+
+Every `terraform:apps` command first builds `lambda/job-api/job-api.zip`,
+including `init`, `validate`, `output`, and `destroy`. The build
+uses `bestzip`'s Node.js implementation to recreate the ZIP with `index.js`,
+`package.json`, and the installed production `node_modules/` at the archive root.
+It does not install dependencies or require a system `zip` command. A failed
+build stops Terraform, and existing ZIPs are excluded from the package. Archive
+timestamps are not normalized, so unchanged code may produce a different ZIP
+hash on rebuild.
+
+To build the archive independently, run `npm run build:job-api`.
+
+To save a plan for review, build once and apply with Terraform directly so the
+archive is not rebuilt between plan and apply:
+
+```sh
+npm run terraform:apps -- plan -out=apps.tfplan
+terraform -chdir=terraform/apps apply apps.tfplan
+```
+
+Keep the exact generated ZIP and saved plan together until apply completes.
+The plan file above is saved in `terraform/apps/` because Terraform uses `-chdir`.
 
 When finished, destroy resources you created. If both configurations contain
 resources, destroy apps before shared:
