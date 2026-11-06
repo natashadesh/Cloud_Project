@@ -7,6 +7,10 @@ coverage/
 .nyc_output/
 *.log
 
+# Generated files
+node_modules/
+*.zip
+
 # Local credentials and environment files
 .aws/
 .env
