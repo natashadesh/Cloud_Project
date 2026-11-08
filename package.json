@@ -5,14 +5,18 @@
     "node": ">=24"
   },
   "scripts": {
-    "install:deps": "npm ci --prefix sast/backend --no-fund --no-update-notifier && npm ci --prefix pentest/backend --no-fund --no-update-notifier",
+    "install:deps": "node scripts/install-deps.mjs",
     "start:sast": "npm --prefix sast/backend start",
     "dev:sast": "npm --prefix sast/backend run dev",
     "start:pentest": "npm --prefix pentest/backend start",
     "dev:pentest": "npm --prefix pentest/backend run dev",
     "start:target": "npm --prefix pentest/backend run target",
     "aws:credentials": "node scripts/aws-credentials.mjs",
+    "build:job-api": "npm --prefix lambda/job-api run build",
     "terraform:shared": "terraform -chdir=terraform/shared",
-    "terraform:apps": "terraform -chdir=terraform/apps"
+    "terraform:apps": "npm run build:job-api && terraform -chdir=terraform/apps"
+  },
+  "devDependencies": {
+    "bestzip": "4.0.3"
   }
 }
