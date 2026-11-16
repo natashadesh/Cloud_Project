@@ -1,26 +1,37 @@
 # Private uploads and reports bucket with versioning, encryption and cleanup.
-# CORS is added once the website bucket (website.tf) exists, since it needs its exact origin.
 #
 # Learner Lab: an SCP denies s3:GetBucketObjectLockConfiguration, which the aws_s3_bucket
-# resource reads on every create, update and refresh. So the empty bucket is created with
-# the AWS CLI below, and all of its settings are normal Terraform resources.
+# resource reads on every create, update and refresh. So the empty bucket is created by a
+# CloudFormation stack (a normal Terraform resource, no CLI), and all of its settings
+# below are normal Terraform resources.
 
+# Also used by registry.tf and website.tf, so it stays in this file.
 data "aws_caller_identity" "current" {}
 
 locals {
+  # Same name pattern that apps/pentest.tf builds, so it must not change.
   artifacts_bucket_name = "cloud-project-artifacts-${data.aws_caller_identity.current.account_id}"
+  artifacts_bucket      = aws_cloudformation_stack.artifacts_bucket.outputs["BucketName"]
 }
 
-resource "terraform_data" "artifacts_bucket" {
-  input = local.artifacts_bucket_name
+resource "aws_cloudformation_stack" "artifacts_bucket" {
+  name = "cloud-project-artifacts"
 
-  provisioner "local-exec" {
-    command = "aws s3api head-bucket --bucket ${self.input} --region ${var.aws_region} 2>/dev/null || aws s3 mb s3://${self.input} --region ${var.aws_region}"
-  }
+  template_body = jsonencode({
+    Resources = {
+      ArtifactsBucket = {
+        Type       = "AWS::S3::Bucket"
+        Properties = { BucketName = local.artifacts_bucket_name }
+      }
+    }
+    Outputs = {
+      BucketName = { Value = { Ref = "ArtifactsBucket" } }
+    }
+  })
 }
 
 resource "aws_s3_bucket_public_access_block" "artifacts" {
-  bucket                  = terraform_data.artifacts_bucket.output
+  bucket                  = local.artifacts_bucket
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -28,7 +39,7 @@ resource "aws_s3_bucket_public_access_block" "artifacts" {
 }
 
 resource "aws_s3_bucket_versioning" "artifacts" {
-  bucket = terraform_data.artifacts_bucket.output
+  bucket = local.artifacts_bucket
 
   versioning_configuration {
     status = "Enabled"
@@ -36,7 +47,7 @@ resource "aws_s3_bucket_versioning" "artifacts" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
-  bucket = terraform_data.artifacts_bucket.output
+  bucket = local.artifacts_bucket
 
   rule {
     apply_server_side_encryption_by_default {
@@ -46,7 +57,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
-  bucket = terraform_data.artifacts_bucket.output
+  bucket = local.artifacts_bucket
 
   # Lifecycle rules on a versioned bucket must wait for versioning to be enabled.
   depends_on = [aws_s3_bucket_versioning.artifacts]
@@ -98,5 +109,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
     abort_incomplete_multipart_upload {
       days_after_initiation = 1
     }
+  }
+}
+
+# Browser uploads (presigned POST) and report fetches (GET) are allowed only from the website.
+resource "aws_s3_bucket_cors_configuration" "artifacts" {
+  bucket = local.artifacts_bucket
+
+  cors_rule {
+    allowed_methods = ["POST", "GET"]
+    allowed_origins = ["http://${aws_s3_bucket_website_configuration.website.website_endpoint}"]
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
   }
 }

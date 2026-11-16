@@ -10,12 +10,12 @@ output "dynamodb_table_arn" {
 
 output "artifacts_bucket_name" {
   description = "Name of the private artifacts bucket."
-  value       = terraform_data.artifacts_bucket.output
+  value       = local.artifacts_bucket
 }
 
 output "artifacts_bucket_arn" {
   description = "ARN of the private artifacts bucket."
-  value       = "arn:aws:s3:::${terraform_data.artifacts_bucket.output}"
+  value       = "arn:aws:s3:::${local.artifacts_bucket}"
 }
 
 output "api_check_repository_url" {
@@ -31,4 +31,9 @@ output "website_bucket_name" {
 output "website_url" {
   description = "Website address (also the origin for artifacts-bucket CORS)."
   value       = "http://${aws_s3_bucket_website_configuration.website.website_endpoint}"
+}
+
+output "analysis_repository_url" {
+  description = "ECR repository URL for the analysis worker image."
+  value       = aws_ecr_repository.analysis.repository_url
 }
