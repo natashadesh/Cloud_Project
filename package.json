@@ -17,6 +17,6 @@
     "terraform:apps": "npm run build:job-api && terraform -chdir=terraform/apps"
   },
   "devDependencies": {
-    "bestzip": "4.0.3"
+    "bestzip": "^2.2.2"
   }
 }
