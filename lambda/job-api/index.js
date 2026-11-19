@@ -24,12 +24,37 @@ function response(statusCode, body) {
   };
 }
 
+// Temporary placeholder until the S3 helper is integrated
+async function verifyUploadedInput(job) {
+  return null;
+}
+
+// Temporary interface for Bhavan's report-signing helper.
+// Replace with the real S3 implementation during integration.
+async function signReportDownload(job) {
+  return null;
+}
+
 exports.handler = async (event) => {
   try {
     const method = event.requestContext?.http?.method;
     const path = event.rawPath || "";
 
-    
+    // Stop accepting new work when maintenance mode is enabled
+    const allowNewJobs = process.env.ALLOW_NEW_JOBS !== "false";
+
+    const isCreateRequest =
+      method === "POST" && path === "/jobs";
+
+    const isStartRequest =
+      method === "POST" && /^\/jobs\/[^/]+\/start$/.test(path);
+
+    if (!allowNewJobs && (isCreateRequest || isStartRequest)) {
+      return response(503, {
+        error: "New job submissions are temporarily disabled",
+      });
+    }
+
     
     // POST /jobs - validate input and create a job
     if (method === "POST" && path === "/jobs") {
@@ -83,7 +108,7 @@ exports.handler = async (event) => {
         }
 
         if (Buffer.byteLength(JSON.stringify(parameters), "utf8") > 4096) {
-          return response(400, { error: "Parameters exceed 4 KiB" });
+          return response(400, { error: "Parameters exceed 4 KiB" }); 
         }
 
         const allowedParameterFields = ["path", "tests"];
@@ -405,30 +430,230 @@ exports.handler = async (event) => {
       });
     }
 
-    // GET /jobs/{jobId} - retrieve a job
-    if (method === "GET" && /^\/jobs\/[^/]+$/.test(path)) {
-      const jobId = event.pathParameters?.jobId ||
-        path.split("/")[2];
 
+    // GET /jobs/{jobId}/report - retrieve a signed report URL
+    if (method === "GET" && /^\/jobs\/[^/]+\/report$/.test(path)) {
+
+      // 1. Extract the job ID
+      const jobId = event.pathParameters?.jobId || path.split("/")[2];
+
+      // 2. Find the job in DynamoDB
       const result = await client.send(
         new GetCommand({
           TableName: tableName,
           Key: { jobId },
+          ConsistentRead: true,
         })
       );
 
-      if (!result.Item) {
+      const job = result.Item;
+
+      // 3. Check whether the job exists
+      if (!job) {
         return response(404, { error: "Job not found" });
       }
 
-      return response(200, result.Item);
+      // 4. Check whether the job has expired
+      const nowEpoch = Math.floor(Date.now() / 1000);
+
+      if (job.expiresAt <= nowEpoch) {
+        return response(410, { error: "Job has expired" });
+      }
+
+      // 5. Reports are available only after successful completion
+      if (
+        job.status !== "SUCCEEDED" ||
+        typeof job.reportKey !== "string" ||
+        !job.reportKey ||
+        typeof job.reportVersionId !== "string" ||
+        !job.reportVersionId
+      ) {
+        return response(409, {
+          error: "Report is not available",
+        });
+      }
+
+      // 6. Ask Bhavan's helper to generate a signed S3 URL
+      let reportUrl;
+
+      try {
+        reportUrl = await signReportDownload(job);
+      } catch (error) {
+        console.error("Report signing failed", {
+          jobId,
+          error,
+        });
+
+        return response(503, {
+          error: "Report service is temporarily unavailable",
+        });
+      }
+
+      // Helper is not connected yet, or returned no valid URL
+      if (
+        typeof reportUrl !== "string" ||
+        !reportUrl.startsWith("https://")
+      ) {
+        return response(503, {
+          error: "Report download is not configured",
+        });
+      }
+
+      // 7. Return the signed URL to the frontend
+      return response(200, {
+        jobId,
+        reportUrl,
+        expiresIn: 60,
+      });
     }
 
+    
+    // GET /jobs/{jobId} - return current job status
+    if (method === "GET" && /^\/jobs\/[^/]+$/.test(path)) {
+
+      // 1. Get the job ID from the URL
+      const jobId = event.pathParameters?.jobId || path.split("/")[2];
+
+      // 2. Read the latest job record from DynamoDB
+      const result = await client.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { jobId },
+          ConsistentRead: true,
+        })
+      );
+
+      let job = result.Item;
+
+      // 3. Return 404 if the job doesn't exist
+      if (!job) {
+        return response(404, { error: "Job not found" });
+      }
+
+      const nowEpoch = Math.floor(Date.now() / 1000);
+
+      // 4. Reject expired jobs
+      if (job.expiresAt <= nowEpoch) {
+        return response(410, { error: "Job has expired" });
+      }
+
+      // 5. Detect jobs that exceeded the processing deadline
+      const isProcessing = ["QUEUED", "RUNNING"].includes(job.status);
+
+      if (
+        isProcessing &&
+        typeof job.deadlineAt === "number" &&
+        job.deadlineAt <= nowEpoch
+      ) {
+        try {
+          const updated = await client.send(
+            new UpdateCommand({
+              TableName: tableName,
+              Key: { jobId },
+
+              UpdateExpression:
+                "SET #status = :failed, " +
+                "finishedAt = :finishedAt, " +
+                "errorCode = :errorCode, " +
+                "errorMessage = :errorMessage",
+
+              ConditionExpression:
+                "#status IN (:queued, :running) " +
+                "AND deadlineAt <= :nowEpoch " +
+                "AND expiresAt > :nowEpoch",
+
+              ExpressionAttributeNames: {
+                "#status": "status",
+              },
+
+              ExpressionAttributeValues: {
+                ":queued": "QUEUED",
+                ":running": "RUNNING",
+                ":failed": "FAILED",
+                ":nowEpoch": nowEpoch,
+                ":finishedAt": new Date().toISOString(),
+                ":errorCode": "JOB_DEADLINE_EXCEEDED",
+                ":errorMessage": "Job exceeded its processing deadline",
+              },
+
+              ReturnValues: "ALL_NEW",
+            })
+          );
+
+          job = updated.Attributes;
+
+        } catch (error) {
+          if (error.name !== "ConditionalCheckFailedException") {
+            throw error;
+          }
+
+          // Another request or worker changed the job.
+          // Read its latest state instead of overwriting it.
+          const latest = await client.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: { jobId },
+              ConsistentRead: true,
+            })
+          );
+
+          job = latest.Item;
+
+          if (!job) {
+            return response(404, { error: "Job not found" });
+          }
+
+          if (job.expiresAt <= Math.floor(Date.now() / 1000)) {
+            return response(410, { error: "Job has expired" });
+          }
+        }
+      }
+
+      // 6. Prepare safe error messages for the frontend
+      const publicErrors = {
+        JOB_DEADLINE_EXCEEDED:
+          "Job exceeded the ten-minute processing deadline.",
+        EXTERNAL_API_UNREACHABLE:
+          "The configured test API could not be reached.",
+        INVALID_PARAMETERS:
+          "Job parameters were invalid.",
+        API_CHECK_FAILED:
+          "The API check failed.",
+      };
+
+      // 7. Return only frontend-relevant fields
+      const jobResponse = {
+        jobId: job.jobId,
+        type: job.type,
+        status: job.status,
+        createdAt: job.createdAt,
+
+        ...(job.queuedAt ? { queuedAt: job.queuedAt } : {}),
+        ...(job.startedAt ? { startedAt: job.startedAt } : {}),
+        ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
+
+        reportAvailable:
+          job.status === "SUCCEEDED" &&
+          typeof job.reportKey === "string" &&
+          job.reportKey.length > 0,
+      };
+
+      // Include safe error details only for failed jobs
+      if (job.status === "FAILED") {
+        jobResponse.errorCode = job.errorCode || "JOB_FAILED";
+        jobResponse.errorMessage =
+          publicErrors[job.errorCode] || "Job processing failed.";
+      }
+
+      return response(200, jobResponse);
+    }
+
+    // No matching API route was found
     return response(404, { error: "Route not found" });
+
   } catch (error) {
     console.error("Job API error:", error);
     return response(500, { error: "Internal server error" });
   }
-  
 };
 

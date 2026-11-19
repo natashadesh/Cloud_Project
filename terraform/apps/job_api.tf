@@ -23,11 +23,22 @@ resource "aws_lambda_function" "job_api" {
   timeout     = 10
   memory_size = 256
 
+
   environment {
     variables = {
       JOBS_TABLE_NAME = data.aws_dynamodb_table.jobs.name
+
+      # Tanishq's API-check Lambda
+      API_CHECK_FUNCTION_NAME = local.api_check_enabled ? aws_lambda_function.api_check[0].function_name : ""
+
+      # Bhavan's static-analysis Lambda (not implemented yet)
+      ANALYSIS_FUNCTION_NAME = ""
+
+      # Allow new jobs to be created and started
+      ALLOW_NEW_JOBS = "true"
     }
   }
+
 }
 
 # HTTP API Gateway for Job API
