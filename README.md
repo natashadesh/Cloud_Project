@@ -44,62 +44,83 @@ saves them in `~/.aws/credentials`. Never commit credentials.
 
 Terraform is split into two configurations:
 
-- `terraform/shared/` contains infrastructure intended for multiple app components.
-  It currently creates the on-demand DynamoDB table `tf-template`, with a string
-  `id` partition key. The ECR and S3 files are placeholders.
-- `terraform/apps/` is intended for the Lambdas, API Gateway, and frontend assets.
-  It currently deploys the Job API Lambda and its HTTP API Gateway.
+- `terraform/shared/` creates DynamoDB, ECR repositories, and S3 buckets.
+- `terraform/apps/` deploys the Job API, API-check worker, API Gateway, and
+  frontend files. The SAST worker's Terraform is still a placeholder.
 
-Each developer uses local Terraform state in their own AWS lab. From the
-repository root, initialize and check the shared configuration, then review the
-plan before applying:
+Install [Docker Desktop](https://docs.docker.com/desktop/) with Buildx in addition
+to the tools above. Image preparation requires Bash (macOS, Linux, or WSL).
 
-```sh
-npm run terraform:shared -- init
-npm run terraform:shared -- validate
-npm run terraform:shared -- plan
-npm run terraform:shared -- apply
-npm run terraform:shared -- output
-```
-
-For the Job API, run the initial dependency setup above, then use these commands
-from the repository root on macOS, Linux, or Windows:
+After a destroy, start Docker Desktop and your AWS Academy lab. Copy the current
+**AWS Details → AWS CLI** credentials block, then run from the repository root:
 
 ```sh
-npm run terraform:apps -- init
-npm run terraform:apps -- plan
-npm run terraform:apps -- apply
+npm run aws:credentials
+terraform -chdir=terraform/shared init
+terraform -chdir=terraform/shared apply
+npm run prepare:apps
+terraform -chdir=terraform/apps init
+terraform -chdir=terraform/apps apply
 ```
 
-Every `terraform:apps` command first builds `lambda/job-api/job-api.zip`,
-including `init`, `validate`, `output`, and `destroy`. The build
-uses `bestzip`'s Node.js implementation to recreate the ZIP with `index.js`,
-`package.json`, and the installed production `node_modules/` at the archive root.
-It does not install dependencies or require a system `zip` command. A failed
-build stops Terraform, and existing ZIPs are excluded from the package. Archive
-timestamps are not normalized, so unchanged code may produce a different ZIP
-hash on rebuild.
+On a fresh checkout or when dependencies change, first run `npm run install:deps`.
+A Terraform destroy does not remove installed dependencies. You can skip `init`
+when that Terraform directory is already initialized.
 
-To build the archive independently, run `npm run build:job-api`.
+You run both applies yourself. Shared infrastructure must be applied first,
+because the image needs an ECR repository to be uploaded into.
 
-To save a plan for review, build once and apply with Terraform directly so the
-archive is not rebuilt between plan and apply:
+`npm run prepare:apps` builds the Job API ZIP, builds and pushes Tanishq's
+API-check image, and retrieves its digest. It saves the region and digest in
+`terraform/apps/image.auto.tfvars.json`, which is excluded from Git. Terraform
+loads that file automatically when you run apps `plan` or `apply`. The script
+never runs Terraform apply.
+
+Review the Terraform plans and type `yes` when prompted. The apps outputs include
+`website_url` and `api_url`. Preparation rebuilds the ZIP each time and uses
+Docker's normal layer cache. If preparation fails, fix the error and rerun it
+before applying apps.
+
+For working API checks, supply your test API's actual base URL, reachable from
+AWS Lambda, when preparing:
 
 ```sh
-npm run terraform:apps -- plan -out=apps.tfplan
-terraform -chdir=terraform/apps apply apps.tfplan
+API_CHECK_TARGET_URL="https://your-test-api.example" npm run prepare:apps
 ```
 
-Keep the exact generated ZIP and saved plan together until apply completes.
-The plan file above is saved in `terraform/apps/` because Terraform uses `-chdir`.
+Replace the example address. A supplied target is saved in the generated
+variables file and retained on later preparations. Without a configured target,
+the existing default is `http://localhost:4000`, which cannot reach the test
+server on your laptop from AWS.
 
-When finished, destroy resources you created. If both configurations contain
-resources, destroy apps before shared:
+The default region is `us-east-1`. To use another region, set `TF_VAR_aws_region`
+before running shared Terraform and preparation so both use the same region.
+
+For later app changes, run `npm run prepare:apps`, then
+`terraform -chdir=terraform/apps apply`. To build only the ZIP locally, use
+`npm run build:job-api`.
+
+The `terraform:shared` and `terraform:apps` npm commands run Terraform directly;
+validation, output, and destroy do not build the ZIP. Keep the generated variables
+file for later apps plans/applies; without an image digest, Terraform disables
+the API-check worker. Each fresh checkout needs its own preparation.
+
+To inspect deployed URLs:
 
 ```sh
-npm run terraform:apps -- destroy
-npm run terraform:shared -- destroy
+terraform -chdir=terraform/apps output
 ```
+
+When finished, destroy apps before shared:
+
+```sh
+terraform -chdir=terraform/apps destroy
+terraform -chdir=terraform/shared destroy
+```
+
+The website and artifacts buckets are created or reused through the AWS CLI for
+Learner Lab compatibility. Terraform destroy leaves those buckets and their
+contents in place; a later deployment reuses them.
 
 Keep local state files until cleanup is complete. `.gitignore` excludes Terraform
 state, generated files, local credentials, and dependency folders.

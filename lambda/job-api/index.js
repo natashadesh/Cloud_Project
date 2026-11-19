@@ -272,6 +272,20 @@ exports.handler = async (event) => {
         });
       }
 
+
+      // Jobs must be started within one hour of creation.
+      const createdAtMs = Date.parse(job.createdAt);
+
+      if (
+        !Number.isFinite(createdAtMs) ||
+        Date.now() >= createdAtMs + 60 * 60 * 1000
+      ) {
+        return response(409, {
+          error: "Job submission window has expired. Create a new job.",
+        });
+      }
+
+
       // Validate input based on the job type
       let upload = null;
 

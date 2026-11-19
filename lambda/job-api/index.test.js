@@ -1,6 +1,5 @@
-
 const assert = require("node:assert/strict");
-const { test } = require("node:test");
+const { beforeEach, test } = require("node:test");
 
 const {
   DynamoDBDocumentClient,
@@ -18,6 +17,23 @@ const {
 process.env.JOBS_TABLE_NAME = "cloud-project-jobs-test";
 
 const { handler } = require("./index.js");
+
+// Give every test its own worker/maintenance settings and restore the caller's env.
+beforeEach((t) => {
+  const names = ["ALLOW_NEW_JOBS", "API_CHECK_FUNCTION_NAME", "ANALYSIS_FUNCTION_NAME"];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+
+  process.env.ALLOW_NEW_JOBS = "true";
+  process.env.API_CHECK_FUNCTION_NAME = "cloud-project-api-check";
+  delete process.env.ANALYSIS_FUNCTION_NAME;
+
+  t.after(() => {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  });
+});
 
 // Simulate an HTTP request received through API Gateway.
 function makeEvent(body) {
@@ -41,7 +57,7 @@ function makeStartEvent(jobId) {
   };
 }
 
-// Send a GETS request to check processing status
+// Send a GET request to check processing status
 function makeStatusEvent(jobId) {
   return {
     requestContext: {
@@ -145,8 +161,6 @@ test("rejects an oversized file", async (t) => {
 test("starts a job and invokes the correct worker", async (t) => {
   const jobId = "job-123";
 
-  process.env.API_CHECK_FUNCTION_NAME = "cloud-project-api-check";
-
   const dbSend = t.mock.method(
     DynamoDBDocumentClient.prototype,
     "send",
@@ -157,6 +171,7 @@ test("starts a job and invokes the correct worker", async (t) => {
             jobId,
             type: "api-check",
             status: "CREATED",
+            createdAt: new Date().toISOString(),
             expiresAt: Math.floor(Date.now() / 1000) + 3600,
           },
         };
@@ -204,8 +219,8 @@ test("starts a job and invokes the correct worker", async (t) => {
   console.log("Job queued and worker invoked successfully");
 });
 
-// TEST 5: Starting an existing job must not invoke again
-test("does not invoke worker for an already-started job", async (t) => {
+// Repeated starts remain idempotent even after the submission window closes.
+test("does not invoke worker again for a started job older than one hour", async (t) => {
   const jobId = "job-456";
 
   const dbSend = t.mock.method(
@@ -219,6 +234,7 @@ test("does not invoke worker for an already-started job", async (t) => {
           jobId,
           type: "api-check",
           status: "QUEUED",
+          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
           expiresAt: Math.floor(Date.now() / 1000) + 3600,
         },
       };
@@ -245,10 +261,9 @@ test("does not invoke worker for an already-started job", async (t) => {
 
 test("simultaneous starts dispatch the worker only once", async (t) => {
   const jobId = "job-concurrent";
+  const createdAt = new Date().toISOString();
   let currentStatus = "CREATED";
   let invocationCount = 0;
-
-  process.env.API_CHECK_FUNCTION_NAME = "cloud-project-api-check";
 
   // Simulate DynamoDB with a shared job status
   t.mock.method(
@@ -261,6 +276,7 @@ test("simultaneous starts dispatch the worker only once", async (t) => {
             jobId,
             type: "api-check",
             status: currentStatus,
+            createdAt,
             expiresAt: Math.floor(Date.now() / 1000) + 3600,
           },
         };
@@ -307,6 +323,52 @@ test("simultaneous starts dispatch the worker only once", async (t) => {
 
   console.log("Concurrent starts dispatched only one worker");
 });
+
+// Freeze the clock so the exact one-hour boundary does not depend on test speed.
+const hour = 60 * 60 * 1000;
+for (const scenario of [
+  { name: "starts a job one millisecond before the one-hour limit", age: hour - 1, statusCode: 202 },
+  { name: "rejects a start exactly at the one-hour limit", age: hour, statusCode: 409 },
+  { name: "rejects a start after the one-hour limit", age: hour + 1, statusCode: 409 },
+  { name: "rejects a start with missing createdAt", createdAt: undefined, statusCode: 409 },
+  { name: "rejects a start with invalid createdAt", createdAt: "not-a-date", statusCode: 409 },
+  { name: "returns 410 for an expired job before checking its submission window", age: hour + 1, expired: true, statusCode: 410 },
+]) {
+  test(scenario.name, async (t) => {
+    const now = Date.now();
+    t.mock.method(Date, "now", () => now);
+    const jobId = "job-submission-window";
+    const job = {
+      jobId,
+      type: "api-check",
+      status: "CREATED",
+      createdAt: scenario.age === undefined
+        ? scenario.createdAt
+        : new Date(now - scenario.age).toISOString(),
+      expiresAt: Math.floor(now / 1000) + (scenario.expired ? -1 : 3600),
+    };
+
+    const dbSend = t.mock.method(DynamoDBDocumentClient.prototype, "send", async (command) => {
+      if (command instanceof GetCommand) return { Item: job };
+      assert.ok(command instanceof UpdateCommand);
+      return {};
+    });
+    const lambdaSend = t.mock.method(LambdaClient.prototype, "send", async (command) => {
+      assert.ok(command instanceof InvokeCommand);
+      return { StatusCode: 202 };
+    });
+
+    const result = await handler(makeStartEvent(jobId));
+    assert.equal(result.statusCode, scenario.statusCode);
+    const accepted = scenario.statusCode === 202;
+    assert.equal(dbSend.mock.callCount(), accepted ? 2 : 1);
+    assert.equal(lambdaSend.mock.callCount(), accepted ? 1 : 0);
+    if (scenario.statusCode === 409) {
+      assert.equal(JSON.parse(result.body).error,
+        "Job submission window has expired. Create a new job.");
+    }
+  });
+}
 
 
 test("returns 410 for an expired job", async (t) => {
@@ -558,16 +620,7 @@ test("returns 503 when report signing is not configured", async (t) => {
 
 
 test("blocks new work when ALLOW_NEW_JOBS is false", async (t) => {
-  const previous = process.env.ALLOW_NEW_JOBS;
   process.env.ALLOW_NEW_JOBS = "false";
-
-  t.after(() => {
-    if (previous === undefined) {
-      delete process.env.ALLOW_NEW_JOBS;
-    } else {
-      process.env.ALLOW_NEW_JOBS = previous;
-    }
-  });
 
   const dbSend = t.mock.method(
     DynamoDBDocumentClient.prototype,
@@ -595,16 +648,7 @@ test("blocks new work when ALLOW_NEW_JOBS is false", async (t) => {
 
 
 test("allows status reads when new jobs are disabled", async (t) => {
-  const previous = process.env.ALLOW_NEW_JOBS;
   process.env.ALLOW_NEW_JOBS = "false";
-
-  t.after(() => {
-    if (previous === undefined) {
-      delete process.env.ALLOW_NEW_JOBS;
-    } else {
-      process.env.ALLOW_NEW_JOBS = previous;
-    }
-  });
 
   t.mock.method(
     DynamoDBDocumentClient.prototype,
@@ -631,3 +675,49 @@ test("allows status reads when new jobs are disabled", async (t) => {
 });
 
 
+test("rejects starting a job more than one hour after creation", async (t) => {
+  const jobId = "job-too-old";
+
+  // Simulate a job created 61 minutes ago
+  const oldCreatedAt = new Date(
+    Date.now() - 61 * 60 * 1000
+  ).toISOString();
+
+  const dbSend = t.mock.method(
+    DynamoDBDocumentClient.prototype,
+    "send",
+    async (command) => {
+      assert.ok(command instanceof GetCommand);
+
+      return {
+        Item: {
+          jobId,
+          type: "api-check",
+          status: "CREATED",
+          createdAt: oldCreatedAt,
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        },
+      };
+    }
+  );
+
+  // The worker must never be invoked for an old job
+  const lambdaSend = t.mock.method(
+    LambdaClient.prototype,
+    "send",
+    async () => {
+      throw new Error("Worker must not be invoked");
+    }
+  );
+
+  const result = await handler(makeStartEvent(jobId));
+
+  assert.equal(result.statusCode, 409);
+  assert.match(
+    JSON.parse(result.body).error,
+    /submission window has expired/i
+  );
+
+  assert.equal(dbSend.mock.callCount(), 1);
+  assert.equal(lambdaSend.mock.callCount(), 0);
+});

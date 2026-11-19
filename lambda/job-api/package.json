@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "bestzip --force node job-api.zip index.js package.json node_modules",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test index.test.js"
   },
   "keywords": [],
   "author": "",
