@@ -26,9 +26,27 @@ resource "aws_lambda_function" "job_api" {
   environment {
     variables = {
       JOBS_TABLE_NAME = data.aws_dynamodb_table.jobs.name
+
+      # Tanishq's API-check Lambda
+      API_CHECK_FUNCTION_NAME = local.api_check_enabled ? aws_lambda_function.api_check[0].function_name : ""
+
+      # Bhavan's static-analysis Lambda (not implemented yet)
+      ANALYSIS_FUNCTION_NAME = ""
+
+      # Allow new jobs to be created and started
+      ALLOW_NEW_JOBS = "true"
     }
   }
+
 }
+
+
+# CloudWatch logs for the Job API Lambda
+resource "aws_cloudwatch_log_group" "job_api" {
+  name              = "/aws/lambda/cloud-project-job-api"
+  retention_in_days = 7
+}
+
 
 # HTTP API Gateway for Job API
 resource "aws_apigatewayv2_api" "job_api" {
@@ -36,7 +54,10 @@ resource "aws_apigatewayv2_api" "job_api" {
   protocol_type = "HTTP"
 
   cors_configuration {
-    allow_origins = ["*"]
+    allow_origins = [
+      "http://cloud-project-website-807928980637.s3-website-us-east-1.amazonaws.com"
+    ]
+
     allow_methods = ["GET", "POST", "OPTIONS"]
     allow_headers = ["content-type"]
   }
@@ -64,12 +85,48 @@ resource "aws_apigatewayv2_route" "get_job" {
   target    = "integrations/${aws_apigatewayv2_integration.job_api.id}"
 }
 
-# Automatically deploy API changes
+# POST /jobs/{jobId}/start endpoint
+resource "aws_apigatewayv2_route" "start_job" {
+  api_id    = aws_apigatewayv2_api.job_api.id
+  route_key = "POST /jobs/{jobId}/start"
+  target    = "integrations/${aws_apigatewayv2_integration.job_api.id}"
+}
+
+# GET /jobs/{jobId}/report endpoint
+resource "aws_apigatewayv2_route" "get_report" {
+  api_id    = aws_apigatewayv2_api.job_api.id
+  route_key = "GET /jobs/{jobId}/report"
+  target    = "integrations/${aws_apigatewayv2_integration.job_api.id}"
+}
+
+
+# Automatically deploy API changes and limit request rates
 resource "aws_apigatewayv2_stage" "job_api" {
   api_id      = aws_apigatewayv2_api.job_api.id
   name        = "$default"
   auto_deploy = true
+
+  # Default throttling for all API routes
+  default_route_settings {
+    throttling_rate_limit  = 5
+    throttling_burst_limit = 10
+  }
+
+  # Stricter throttling for creating jobs
+  route_settings {
+    route_key              = "POST /jobs"
+    throttling_rate_limit  = 1
+    throttling_burst_limit = 2
+  }
+
+  # Stricter throttling for starting jobs
+  route_settings {
+    route_key              = "POST /jobs/{jobId}/start"
+    throttling_rate_limit  = 1
+    throttling_burst_limit = 2
+  }
 }
+
 
 # Allow API Gateway to invoke Lambda
 resource "aws_lambda_permission" "api_gateway" {

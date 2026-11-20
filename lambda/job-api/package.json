@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "bestzip --force node job-api.zip index.js package.json node_modules",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test index.test.js"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +13,7 @@
   "type": "commonjs",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1162.0",
+    "@aws-sdk/client-lambda": "^3.1171.0",
     "@aws-sdk/lib-dynamodb": "^3.1162.0"
   }
 }

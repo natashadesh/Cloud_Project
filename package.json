@@ -14,9 +14,10 @@
     "aws:credentials": "node scripts/aws-credentials.mjs",
     "build:job-api": "npm --prefix lambda/job-api run build",
     "terraform:shared": "terraform -chdir=terraform/shared",
-    "terraform:apps": "npm run build:job-api && terraform -chdir=terraform/apps"
+    "terraform:apps": "terraform -chdir=terraform/apps",
+    "prepare:apps": "bash scripts/prepare-apps.sh"
   },
   "devDependencies": {
-    "bestzip": "4.0.3"
+    "bestzip": "^2.2.2"
   }
 }

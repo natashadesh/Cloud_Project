@@ -43,6 +43,9 @@ jobs:
       - name: Install project dependencies
         run: npm run install:deps
 
+      - name: Build Job API Lambda for Terraform validation
+        run: npm run build:job-api
+
       - name: Install terraform
         uses: hashicorp/setup-terraform@v4
 

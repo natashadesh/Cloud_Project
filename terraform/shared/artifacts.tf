@@ -1,9 +1,9 @@
 # Private uploads and reports bucket with versioning, encryption and cleanup.
 #
 # Learner Lab: an SCP denies s3:GetBucketObjectLockConfiguration, which the aws_s3_bucket
-# resource reads on every create, update and refresh. So the empty bucket is created by a
-# CloudFormation stack (a normal Terraform resource, no CLI), and all of its settings
-# below are normal Terraform resources.
+# resource reads on every create, update and refresh. Create or reuse the bucket
+# with the AWS CLI, like website.tf; manage its settings with Terraform below.
+# The bucket and its contents remain after terraform destroy.
 
 # Also used by registry.tf and website.tf, so it stays in this file.
 data "aws_caller_identity" "current" {}
@@ -11,23 +11,15 @@ data "aws_caller_identity" "current" {}
 locals {
   # Same name pattern that apps/pentest.tf builds, so it must not change.
   artifacts_bucket_name = "cloud-project-artifacts-${data.aws_caller_identity.current.account_id}"
-  artifacts_bucket      = aws_cloudformation_stack.artifacts_bucket.outputs["BucketName"]
+  artifacts_bucket      = terraform_data.artifacts_bucket.output
 }
 
-resource "aws_cloudformation_stack" "artifacts_bucket" {
-  name = "cloud-project-artifacts"
+resource "terraform_data" "artifacts_bucket" {
+  input = local.artifacts_bucket_name
 
-  template_body = jsonencode({
-    Resources = {
-      ArtifactsBucket = {
-        Type       = "AWS::S3::Bucket"
-        Properties = { BucketName = local.artifacts_bucket_name }
-      }
-    }
-    Outputs = {
-      BucketName = { Value = { Ref = "ArtifactsBucket" } }
-    }
-  })
+  provisioner "local-exec" {
+    command = "aws s3api head-bucket --bucket ${self.input} --expected-bucket-owner ${data.aws_caller_identity.current.account_id} --region ${var.aws_region} 2>/dev/null || aws s3 mb s3://${self.input} --region ${var.aws_region}"
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "artifacts" {
