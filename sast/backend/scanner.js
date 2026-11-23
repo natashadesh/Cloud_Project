@@ -161,14 +161,31 @@ const getLineContent = (code, lineNumber) => {
 export const scanCode = (code, filename = 'untitled.js') => {
   const vulnerabilities = [];
 
+  // Where each line starts, so a match finds its line with a quick search instead
+  // of re-splitting the whole file for every match (keeps large uploads fast).
+  const lineStarts = [0];
+  for (let i = code.indexOf('\n'); i !== -1; i = code.indexOf('\n', i + 1)) lineStarts.push(i + 1);
+  const lineAt = (index) => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= index) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+  const lineText = (line) =>
+    code.slice(lineStarts[line - 1], line < lineStarts.length ? lineStarts[line] - 1 : code.length).trim();
+
   for (const rule of vulnerabilityRules) {
     for (const pattern of rule.patterns) {
       let match;
       const regex = new RegExp(pattern.regex.source, pattern.regex.flags);
       
       while ((match = regex.exec(code)) !== null) {
-        const lineNumber = getLineNumber(code, match.index);
-        const lineContent = getLineContent(code, lineNumber);
+        const lineNumber = lineAt(match.index);
+        const lineContent = lineText(lineNumber);
         
         vulnerabilities.push({
           id: rule.id,
