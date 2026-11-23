@@ -15,3 +15,10 @@ variable "api_check_target_url" {
   type        = string
   default     = "http://localhost:4000"
 }
+
+
+variable "analysis_image_digest" {
+  description = "Digest (sha256:...) of the pushed analysis image. Leave null to skip creating the Lambda."
+  type        = string
+  default     = null
+}

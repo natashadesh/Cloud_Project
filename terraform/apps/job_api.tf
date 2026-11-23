@@ -30,8 +30,11 @@ resource "aws_lambda_function" "job_api" {
       # Tanishq's API-check Lambda
       API_CHECK_FUNCTION_NAME = local.api_check_enabled ? aws_lambda_function.api_check[0].function_name : ""
 
-      # Bhavan's static-analysis Lambda (not implemented yet)
-      ANALYSIS_FUNCTION_NAME = ""
+      # Bhavan's static-analysis Lambda (empty until the image digest is set)
+      ANALYSIS_FUNCTION_NAME = local.analysis_enabled ? aws_lambda_function.analysis[0].function_name : ""
+
+      # Bhavan's private artifacts bucket (upload forms, upload checks, report links)
+      ARTIFACTS_BUCKET_NAME = local.artifacts_bucket_name
 
       # Allow new jobs to be created and started
       ALLOW_NEW_JOBS = "true"
@@ -125,6 +128,12 @@ resource "aws_apigatewayv2_stage" "job_api" {
     throttling_rate_limit  = 1
     throttling_burst_limit = 2
   }
+  depends_on = [
+    aws_apigatewayv2_route.create_job,
+    aws_apigatewayv2_route.get_job,
+    aws_apigatewayv2_route.start_job,
+    aws_apigatewayv2_route.get_report
+  ]
 }
 
 

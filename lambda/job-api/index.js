@@ -24,15 +24,16 @@ function response(statusCode, body) {
   };
 }
 
-// Temporary placeholder until the S3 helper is integrated
+// S3 helpers (Bhavan): upload form, upload check and signed report link.
+const { createS3Helpers } = require("./s3Helpers");
+const s3Helpers = createS3Helpers();
+
 async function verifyUploadedInput(job) {
-  return null;
+  return s3Helpers.verifyUploadedInput(job);
 }
 
-// Temporary interface for Bhavan's report-signing helper.
-// Replace with the real S3 implementation during integration.
 async function signReportDownload(job) {
-  return null;
+  return s3Helpers.signReportDownload(job);
 }
 
 exports.handler = async (event) => {
@@ -204,6 +205,15 @@ exports.handler = async (event) => {
       // 7. Generate a unique ID and creation timestamp
       const jobId = randomUUID();
       const now = new Date().toISOString();
+      
+      // 7b. Static-analysis jobs get a signed S3 upload form (5 minutes, 1 byte to 5 MiB)
+      let upload = null;
+      if (body.type === "static-analysis") {
+        upload = await s3Helpers.createUploadForm(jobId);
+        if (!upload) {
+          return response(503, { error: "File uploads are not configured" });
+        }
+      }
 
       // 8. Create the DynamoDB job record
       const job = {
@@ -231,6 +241,7 @@ exports.handler = async (event) => {
         status: job.status,
         createdAt: job.createdAt,
         statusUrl: `/jobs/${jobId}`,
+        ...(upload ? { upload } : {}),
       });
     }
 
