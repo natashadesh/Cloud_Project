@@ -128,6 +128,12 @@ resource "aws_apigatewayv2_stage" "job_api" {
     throttling_rate_limit  = 1
     throttling_burst_limit = 2
   }
+  depends_on = [
+    aws_apigatewayv2_route.create_job,
+    aws_apigatewayv2_route.get_job,
+    aws_apigatewayv2_route.start_job,
+    aws_apigatewayv2_route.get_report
+  ]
 }
 
 
