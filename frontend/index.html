@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CodeGuard Cloud</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232557d6' d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/>
+          <path class="tick" d="m8.5 12 2.5 2.5 4.5-5"/>
+        </svg>
+        <div>
+          <h1>CodeGuard Cloud</h1>
+          <p>Find security problems in your API or source code, scanned by serverless workers on AWS.</p>
+        </div>
+      </div>
+
+      <ol class="how" aria-label="How it works">
+        <li><span>1</span>Choose a scan</li>
+        <li><span>2</span>A worker runs it in the cloud</li>
+        <li><span>3</span>Read or download the report</li>
+      </ol>
+    </div>
+  </header>
+
+  <main>
+    <!-- 1. Choose a tool and submit a job -->
+    <section class="card" aria-labelledby="new-job-title">
+      <h2 id="new-job-title">New scan</h2>
+
+      <div class="tabs" role="tablist" aria-label="Scan type">
+        <button type="button" role="tab" id="tab-api" aria-controls="form-api" aria-selected="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><circle cx="18" cy="16" r="3"/><path d="m20.2 18.2 1.8 1.8"/></svg>
+          API check
+        </button>
+        <button type="button" role="tab" id="tab-code" aria-controls="form-code" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/></svg>
+          Code scan
+        </button>
+      </div>
+
+      <form id="form-api" role="tabpanel" aria-labelledby="tab-api" novalidate>
+        <label for="api-path">Path on the test API</label>
+        <div class="path-input">
+          <span aria-hidden="true">test-api</span>
+          <input id="api-path" name="path" type="text" value="/" maxlength="200" autocomplete="off" spellcheck="false" aria-describedby="api-path-hint">
+        </div>
+        <p id="api-path-hint" class="hint">Starts with <code>/</code>, for example <code>/api/users</code>. The test API itself is set by the project.</p>
+
+        <fieldset>
+          <div class="legend-row">
+            <legend>Tests</legend>
+            <span class="links">
+              <button type="button" class="link" id="select-all">All</button>
+              <button type="button" class="link" id="select-none">None</button>
+            </span>
+          </div>
+          <div id="test-list" class="test-grid"></div>
+        </fieldset>
+
+        <button type="submit" class="primary">Run API check</button>
+      </form>
+
+      <form id="form-code" role="tabpanel" aria-labelledby="tab-code" hidden novalidate>
+        <label class="dropzone" id="dropzone" for="code-file">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
+          <strong id="drop-title">Drop a file here or click to choose</strong>
+          <span id="drop-detail">One source file, a .zip or a .tar, up to 5 MB</span>
+          <input id="code-file" name="file" type="file" class="visually-hidden">
+        </label>
+
+        <button type="submit" class="primary">Upload and scan</button>
+      </form>
+
+      <p id="form-message" class="message error" role="alert" hidden></p>
+    </section>
+
+    <!-- 2. Status of the selected job -->
+    <section id="job-card" class="card" aria-labelledby="job-title" hidden>
+      <div class="card-head">
+        <h2 id="job-title">Job status</h2>
+        <span id="job-type" class="pill"></span>
+      </div>
+      <p class="job-meta">Job ID <code id="job-id"></code></p>
+
+      <ol id="stages" class="stages" aria-label="Job stages">
+        <li data-stage="CREATED"><span class="icon"></span><span class="label">Created</span></li>
+        <li data-stage="QUEUED"><span class="icon"></span><span class="label">Queued</span></li>
+        <li data-stage="RUNNING"><span class="icon"></span><span class="label">Running</span></li>
+        <li data-stage="DONE"><span class="icon"></span><span class="label">Finished</span></li>
+      </ol>
+
+      <p id="job-status" class="status" role="status" aria-live="polite"></p>
+      <p id="job-error" class="message error" hidden></p>
+
+      <div class="actions">
+        <button type="button" id="retry-start" class="primary" hidden>Try starting again</button>
+        <button type="button" id="copy-link">Copy link to this job</button>
+      </div>
+    </section>
+
+    <!-- 3. Report -->
+    <section id="report-card" class="card" aria-labelledby="report-title" hidden>
+      <div class="card-head">
+        <h2 id="report-title">Report</h2>
+        <div class="actions tight">
+          <button type="button" id="copy-report">Copy</button>
+          <button type="button" id="download-report" class="primary">Download .txt</button>
+        </div>
+      </div>
+      <div id="report-summary" class="chips" aria-label="Report summary"></div>
+      <pre id="report" tabindex="0"></pre>
+    </section>
+
+    <!-- 4. Jobs started from this browser -->
+    <section class="card" aria-labelledby="recent-title">
+      <div class="card-head">
+        <h2 id="recent-title">Recent jobs</h2>
+        <button type="button" class="link" id="clear-recent" hidden>Clear</button>
+      </div>
+      <ul id="recent-list" class="recent"></ul>
+      <p id="recent-empty" class="hint">No jobs yet. Jobs you start appear here and are kept for 7 days.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>Cloud Project demo · S3 · API Gateway · Lambda · DynamoDB. Use only non-sensitive test code and test APIs.</p>
+  </footer>
+</body>
+</html>

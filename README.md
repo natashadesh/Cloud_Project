@@ -125,6 +125,24 @@ contents in place; a later deployment reuses them.
 Keep local state files until cleanup is complete. `.gitignore` excludes Terraform
 state, generated files, local credentials, and dependency folders.
 
+## Website
+
+The website is plain HTML, CSS and JavaScript in `frontend/`. Applying apps uploads
+it to the website bucket and generates `config.json` with the Job API address.
+Open the `website_url` output to use it.
+
+On the page, choose **API check** (a path and tests) or **Code scan** (one file,
+`.zip` or `.tar`, up to 5 MB). The page creates the job, uploads the file directly
+to S3 for code scans, starts the job, checks its status and shows the report with
+a download button. Recent job IDs are kept in the browser, and a link such as
+`<website_url>/#job=<jobId>` reopens a job.
+
+To preview locally against a deployed API, create `frontend/config.json`
+(Git-ignored and never uploaded) containing `{"apiUrl": "<api_url output>"}` and
+serve the folder, for example with `npx serve frontend`. API Gateway accepts
+requests only from the website address, so local previews can show the page but
+cannot call the API.
+
 ## Team Git workflow
 
 Start with a clean working tree. Update `main`, then create a branch for your task:
