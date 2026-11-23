@@ -33,6 +33,9 @@ resource "aws_lambda_function" "job_api" {
       # Bhavan's static-analysis Lambda (not implemented yet)
       ANALYSIS_FUNCTION_NAME = ""
 
+      # Bhavan's private artifacts bucket (upload forms, upload checks, report links)
+      ARTIFACTS_BUCKET_NAME = local.artifacts_bucket_name
+
       # Allow new jobs to be created and started
       ALLOW_NEW_JOBS = "true"
     }
