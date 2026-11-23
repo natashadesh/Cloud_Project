@@ -19,3 +19,9 @@ output "website_url" {
   description = "Public website address."
   value       = "http://${local.website_bucket_name}.s3-website-${var.aws_region}.amazonaws.com"
 }
+
+
+output "analysis_function_name" {
+  description = "Analysis Lambda name (null until the image digest is set)."
+  value       = one(aws_lambda_function.analysis[*].function_name)
+}
