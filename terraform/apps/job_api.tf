@@ -58,7 +58,7 @@ resource "aws_apigatewayv2_api" "job_api" {
 
   cors_configuration {
     allow_origins = [
-      "http://cloud-project-website-807928980637.s3-website-us-east-1.amazonaws.com"
+      "http://${local.website_bucket_name}.s3-website-${var.aws_region}.amazonaws.com"
     ]
 
     allow_methods = ["GET", "POST", "OPTIONS"]
