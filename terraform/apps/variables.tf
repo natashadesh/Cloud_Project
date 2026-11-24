@@ -11,9 +11,9 @@ variable "api_check_image_digest" {
 }
 
 variable "api_check_target_url" {
-  description = "Base URL of the test API the API-check worker scans."
+  description = "Base URL of the test API the API-check worker scans. Leave null to use the deployed test target (test_target.tf)."
   type        = string
-  default     = "http://localhost:4000"
+  default     = null
 }
 
 

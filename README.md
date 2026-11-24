@@ -81,17 +81,21 @@ Review the Terraform plans and type `yes` when prompted. The apps outputs includ
 Docker's normal layer cache. If preparation fails, fix the error and rerun it
 before applying apps.
 
-For working API checks, supply your test API's actual base URL, reachable from
-AWS Lambda, when preparing:
+API checks scan a deliberately vulnerable test API (`pentest/backend/test-target-app.js`,
+fake data only). Applying apps deploys it as the `cloud-project-test-target` Lambda
+with a public Function URL (output `test_target_url`) and points the worker at it,
+so no extra step is needed. Good paths to try on the website are `/api/user?id=1`,
+`/api/users` and `/api/data`. Locally, the same API runs with `npm run start:target`
+on port 4000.
+
+To scan a different test API you own instead, give its base URL when preparing:
 
 ```sh
 API_CHECK_TARGET_URL="https://your-test-api.example" npm run prepare:apps
 ```
 
-Replace the example address. A supplied target is saved in the generated
-variables file and retained on later preparations. Without a configured target,
-the existing default is `http://localhost:4000`, which cannot reach the test
-server on your laptop from AWS.
+The address is saved in the generated variables file. Remove
+`api_check_target_url` from that file to go back to the deployed test API.
 
 The default region is `us-east-1`. To use another region, set `TF_VAR_aws_region`
 before running shared Terraform and preparation so both use the same region.
