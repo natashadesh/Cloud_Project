@@ -25,3 +25,7 @@ output "analysis_function_name" {
   description = "Analysis Lambda name (null until the image digest is set)."
   value       = one(aws_lambda_function.analysis[*].function_name)
 }
+output "test_target_url" {
+  description = "Public URL of the deliberately vulnerable test API that API checks scan."
+  value       = aws_lambda_function_url.test_target.function_url
+}
