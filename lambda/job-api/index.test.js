@@ -160,6 +160,8 @@ test("rejects an oversized file", async (t) => {
 // TEST 4: Start a valid API-check job
 test("starts a job and invokes the correct worker", async (t) => {
   const jobId = "job-123";
+  const logs = [];
+  t.mock.method(console, "info", (line) => logs.push(JSON.parse(line)));
 
   const dbSend = t.mock.method(
     DynamoDBDocumentClient.prototype,
@@ -215,8 +217,79 @@ test("starts a job and invokes the correct worker", async (t) => {
   assert.equal(result.statusCode, 202);
   assert.equal(dbSend.mock.callCount(), 2);
   assert.equal(lambdaSend.mock.callCount(), 1);
+  assert.deepEqual(logs.map(entry => entry.message), [
+    "job_queued", "worker_dispatched", "request_completed",
+  ]);
+  assert.ok(logs.every(entry => entry.jobId === jobId));
+  assert.equal(logs.at(-1).statusCode, 202);
 
   console.log("Job queued and worker invoked successfully");
+});
+
+test("correlates concurrent creates with their own job and Lambda request IDs", async (t) => {
+  const logs = [];
+  t.mock.method(console, "info", (line) => logs.push(JSON.parse(line)));
+  t.mock.method(DynamoDBDocumentClient.prototype, "send", async () => ({}));
+
+  const responses = await Promise.all(["first", "second"].map(requestId => {
+    const event = makeEvent({
+      type: "api-check",
+      parameters: { path: "/api/users?token=private-request-value" },
+    });
+    event.requestContext.requestId = `gateway-${requestId}`;
+    return handler(event, { awsRequestId: requestId });
+  }));
+
+  assert.notEqual(JSON.parse(responses[0].body).jobId, JSON.parse(responses[1].body).jobId);
+  for (const [index, requestId] of ["first", "second"].entries()) {
+    assert.equal(responses[index].statusCode, 201);
+    const requestLogs = logs.filter(entry => entry.requestId === requestId);
+    assert.deepEqual(requestLogs.map(entry => entry.message), ["job_created", "request_completed"]);
+    for (const entry of requestLogs) {
+      assert.equal(entry.jobId, JSON.parse(responses[index].body).jobId);
+      assert.equal(entry.apiGatewayRequestId, `gateway-${requestId}`);
+      assert.equal(entry.route, "/jobs");
+      assert.equal(entry.method, "POST");
+    }
+    assert.equal(requestLogs.at(-1).statusCode, 201);
+    assert.ok(requestLogs.at(-1).durationMs >= 0);
+  }
+  assert.ok(!JSON.stringify(logs).includes("private-request-value"));
+});
+
+test("logs failed status reads with job and request IDs without dumping errors", async (t) => {
+  const logs = [];
+  t.mock.method(console, "error", (line) => logs.push(JSON.parse(line)));
+  t.mock.method(DynamoDBDocumentClient.prototype, "send", async () => {
+    const error = new Error("private-error-detail");
+    error.name = "AccessDeniedException";
+    throw error;
+  });
+
+  const result = await handler(makeStatusEvent("job-failed-read"), { awsRequestId: "failed-request" });
+
+  assert.equal(result.statusCode, 500);
+  assert.deepEqual(logs.map(entry => entry.message), ["request_failed", "request_completed"]);
+  assert.ok(logs.every(entry => entry.jobId === "job-failed-read" && entry.requestId === "failed-request"));
+  assert.equal(logs[0].errorName, "AccessDeniedException");
+  assert.equal(logs[1].statusCode, 500);
+  assert.ok(!JSON.stringify(logs).includes("private-error-detail"));
+});
+
+test("logs rejected requests without recording their body", async (t) => {
+  const logs = [];
+  t.mock.method(console, "warn", (line) => logs.push(JSON.parse(line)));
+  const event = makeEvent({ type: "invalid", password: "private-body-value" });
+  event.requestContext.requestId = "gateway-rejected";
+
+  const result = await handler(event);
+
+  assert.equal(result.statusCode, 400);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].requestId, "gateway-rejected");
+  assert.equal(logs[0].jobId, null);
+  assert.equal(logs[0].statusCode, 400);
+  assert.ok(!JSON.stringify(logs).includes("private-body-value"));
 });
 
 // Repeated starts remain idempotent even after the submission window closes.
