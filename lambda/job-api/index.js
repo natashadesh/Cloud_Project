@@ -16,7 +16,7 @@ const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const lambdaClient = new LambdaClient({});
 const tableName = process.env.JOBS_TABLE_NAME;
 
-function response(statusCode, body) {
+function httpResponse(statusCode, body) {
   return {
     statusCode,
     headers: { "Content-Type": "application/json" },
@@ -36,11 +36,44 @@ async function signReportDownload(job) {
   return s3Helpers.signReportDownload(job);
 }
 
-exports.handler = async (event) => {
-  try {
-    const method = event.requestContext?.http?.method;
-    const path = event.rawPath || "";
+exports.handler = async (event, context = {}) => {
+  const startedAt = performance.now();
+  const method = event.requestContext?.http?.method;
+  const path = event.rawPath || "";
+  const jobRoute = path.match(/^\/jobs\/([^/]+)(\/(?:start|report))?$/);
+  let logJobId = jobRoute
+    ? event.pathParameters?.jobId || jobRoute[1]
+    : null;
+  const route = path === "/jobs"
+    ? "/jobs"
+    : jobRoute ? `/jobs/{jobId}${jobRoute[2] || ""}` : "unmatched";
 
+  // Log identifiers and outcomes, never request bodies, files or signed URLs.
+  // Keep this context local to the invocation so concurrent requests cannot mix IDs.
+  function log(level, message, fields = {}) {
+    console[level](JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: level.toUpperCase(),
+      message,
+      requestId: context.awsRequestId || event.requestContext?.requestId || null,
+      apiGatewayRequestId: event.requestContext?.requestId || null,
+      method,
+      route,
+      jobId: logJobId,
+      ...fields,
+    }));
+  }
+
+  function response(statusCode, body) {
+    log(statusCode >= 500 ? "error" : statusCode >= 400 ? "warn" : "info",
+      "request_completed", {
+        statusCode,
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      });
+    return httpResponse(statusCode, body);
+  }
+
+  try {
     // Stop accepting new work when maintenance mode is enabled
     const allowNewJobs = process.env.ALLOW_NEW_JOBS !== "false";
 
@@ -204,6 +237,7 @@ exports.handler = async (event) => {
 
       // 7. Generate a unique ID and creation timestamp
       const jobId = randomUUID();
+      logJobId = jobId;
       const now = new Date().toISOString();
       
       // 7b. Static-analysis jobs get a signed S3 upload form (5 minutes, 1 byte to 5 MiB)
@@ -233,6 +267,8 @@ exports.handler = async (event) => {
           ConditionExpression: "attribute_not_exists(jobId)",
         })
       );
+
+      log("info", "job_created", { jobType: job.type, jobStatus: job.status });
 
       // 10. Return the new job information to the frontend
       return response(201, {
@@ -411,6 +447,8 @@ exports.handler = async (event) => {
         throw error;
       }
 
+      log("info", "job_queued", { jobType: job.type, jobStatus: "QUEUED" });
+
       // 7. Invoke the API-check worker asynchronously
       try {
         const invocation = await lambdaClient.send(
@@ -422,8 +460,7 @@ exports.handler = async (event) => {
         );
 
         if (invocation.StatusCode !== 202) {
-          console.error("Unexpected worker invocation response", {
-            jobId,
+          log("error", "worker_dispatch_unconfirmed", {
             statusCode: invocation.StatusCode,
           });
 
@@ -434,9 +471,8 @@ exports.handler = async (event) => {
         }
 
       } catch (error) {
-        console.error("Worker invocation error", {
-          jobId,
-          error,
+        log("error", "worker_dispatch_failed", {
+          errorName: error.name,
         });
 
         // Do not automatically requeue or invoke again.
@@ -446,6 +482,8 @@ exports.handler = async (event) => {
           jobId,
         });
       }
+
+      log("info", "worker_dispatched", { workerFunctionName });
 
       // 8. Tell the frontend that the job was accepted
       return response(202, {
@@ -504,9 +542,8 @@ exports.handler = async (event) => {
       try {
         reportUrl = await signReportDownload(job);
       } catch (error) {
-        console.error("Report signing failed", {
-          jobId,
-          error,
+        log("error", "report_signing_failed", {
+          errorName: error.name,
         });
 
         return response(503, {
@@ -523,6 +560,8 @@ exports.handler = async (event) => {
           error: "Report download is not configured",
         });
       }
+
+      log("info", "report_url_created");
 
       // 7. Return the signed URL to the frontend
       return response(200, {
@@ -606,6 +645,7 @@ exports.handler = async (event) => {
           );
 
           job = updated.Attributes;
+          log("warn", "job_deadline_exceeded", { jobStatus: "FAILED" });
 
         } catch (error) {
           if (error.name !== "ConditionalCheckFailedException") {
@@ -677,7 +717,7 @@ exports.handler = async (event) => {
     return response(404, { error: "Route not found" });
 
   } catch (error) {
-    console.error("Job API error:", error);
+    log("error", "request_failed", { errorName: error.name });
     return response(500, { error: "Internal server error" });
   }
 };
